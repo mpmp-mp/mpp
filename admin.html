@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin - Online Documents</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="logo.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <img src="logo.svg" alt="logo">
+  <h1>Online Documents <span style="color:var(--mute);font-weight:400">/ Admin</span></h1>
+  <div class="sp"></div>
+  <span id="status" class="hide" style="font-size:13px"></span>
+</header>
+
+<main>
+  <!-- PEHLI BAAR: password set -->
+  <div id="setup" class="card center hide">
+    <img src="logo.svg" alt="">
+    <h2>Set admin password</h2>
+    <p style="color:var(--mute);font-size:14px">Choose a password. Copy the line shown and paste it in <b>config.js</b> (ADMIN_HASH). Then reload this page.</p>
+    <input id="sp" type="password" placeholder="New password">
+    <div class="row" style="justify-content:center;margin-top:14px"><button id="spBtn" class="btn">Create</button></div>
+    <div id="spOut" style="margin-top:14px;word-break:break-all;font-size:13px;text-align:left"></div>
+  </div>
+
+  <!-- LOGIN -->
+  <div id="login" class="card center hide">
+    <img src="logo.svg" alt="">
+    <h2>Admin Login</h2>
+    <div style="text-align:left"><label>Password</label><input id="pw" type="password" autocomplete="current-password"></div>
+    <div class="row" style="justify-content:center;margin-top:16px"><button id="loginBtn" class="btn">Login</button></div>
+    <div id="lmsg" class="msg err"></div>
+  </div>
+
+  <!-- PANEL -->
+  <div id="panel" class="hide">
+    <div class="card" style="border-color:#7c5a10;background:#2a2410">
+      <b>Keep this page open.</b>
+      <span style="color:var(--mute)">Files are not stored anywhere. They are sent directly from this browser to the client, so the client can download only while this page is open and online. If you reload or close it, all documents and links are cleared.</span>
+    </div>
+
+    <div class="card">
+      <h2>Add new document</h2>
+      <label>Document name</label><input id="up_title" type="text" placeholder="e.g. Invoice - Rahul">
+      <label>File</label><input id="up_file" type="file">
+      <div class="row" style="margin-top:14px"><button id="upBtn" class="btn">Create link</button></div>
+      <div id="upmsg" class="msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Your documents</h2>
+      <div id="list"></div>
+    </div>
+  </div>
+</main>
+
+<dialog id="otpDlg">
+  <h2>OTP for client</h2>
+  <div id="otpTitle" style="color:var(--mute)"></div>
+  <div id="otpVal" class="otp"></div>
+  <div style="color:var(--mute);font-size:13px;text-align:center">Valid for 15 minutes, one time use.</div>
+  <div class="row" style="justify-content:center;margin-top:16px">
+    <button id="otpCopy" class="btn sm">Copy OTP</button>
+    <button class="btn ghost sm" onclick="otpDlg.close()">Close</button>
+  </div>
+</dialog>
+
+<dialog id="editDlg">
+  <h2>Edit document</h2>
+  <label>Document name</label><input id="ed_title" type="text">
+  <label>Replace file (optional)</label><input id="ed_file" type="file">
+  <div class="row" style="margin-top:16px">
+    <button id="edSave" class="btn sm">Save</button>
+    <button class="btn ghost sm" onclick="editDlg.close()">Cancel</button>
+  </div>
+  <div id="edmsg" class="msg"></div>
+</dialog>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const otpDlg = $('otpDlg'), editDlg = $('editDlg');
+const docs = new Map();      // sirf is page ki memory me, kahin save nahi hota
+let editing = null, peer = null;
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const linkFor = code => new URL('./?d=' + code, location.href).href;
+function randCode(){
+  const a = 'abcdefghijkmnpqrstuvwxyz23456789', b = crypto.getRandomValues(new Uint8Array(12));
+  return Array.from(b, x => a[x % a.length]).join('');
+}
+function randOtp(){ return String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0'); }
+async function sha(s){
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(b), x => x.toString(16).padStart(2, '0')).join('');
+}
+async function copy(t){ try{ await navigator.clipboard.writeText(t); return true; }catch(e){ prompt('Copy this:', t); return false; } }
+
+/* ---------- start ---------- */
+if(!CFG.ADMIN_HASH) $('setup').classList.remove('hide'); else $('login').classList.remove('hide');
+
+$('spBtn').onclick = async () => {
+  const p = $('sp').value;
+  if(p.length < 6){ $('spOut').textContent = 'Use at least 6 characters.'; return; }
+  const h = await sha(p);
+  $('spOut').innerHTML = 'Paste this in config.js:<br><code>ADMIN_HASH: "' + h + '"</code>';
+};
+
+$('loginBtn').onclick = async () => {
+  if(await sha($('pw').value) !== CFG.ADMIN_HASH){ $('lmsg').textContent = 'Wrong password.'; return; }
+  $('login').classList.add('hide'); $('panel').classList.remove('hide');
+  startPeer(); render();
+};
+$('pw').addEventListener('keydown', e => { if(e.key === 'Enter') $('loginBtn').click(); });
+
+/* ---------- peer-to-peer ---------- */
+function setStatus(t, ok){ const s = $('status'); s.classList.remove('hide'); s.textContent = t; s.style.color = ok ? 'var(--ok)' : 'var(--bad)'; }
+function startPeer(){
+  setStatus('Connecting...', false);
+  peer = new Peer(CFG.PEER_ID);
+  peer.on('open', () => setStatus('Online', true));
+  peer.on('disconnected', () => { setStatus('Reconnecting...', false); try{ peer.reconnect(); }catch(e){} });
+  peer.on('error', e => {
+    if(e.type === 'unavailable-id') setStatus('Admin is already open in another tab/device. Close it and reload.', false);
+    else setStatus('Connection problem: ' + e.type, false);
+  });
+  peer.on('connection', c => c.on('data', m => handle(c, m)));
+}
+
+function handle(c, m){
+  if(!m || typeof m !== 'object') return;
+  const d = docs.get(m.d);
+  if(m.t === 'info'){
+    c.send({ t: 'info', ok: !!d, title: d ? d.title : '' });
+  } else if(m.t === 'otp'){
+    if(!d){ c.send({ t: 'bad', gone: true }); return; }
+    if(!d.otp || Date.now() > d.exp || d.tries >= 5){ c.send({ t: 'bad' }); return; }
+    if(String(m.otp).trim() !== d.otp){ d.tries++; c.send({ t: 'bad' }); return; }
+    d.otp = null; d.downloads++;
+    d.file.arrayBuffer().then(buf => { c.send({ t: 'file', name: d.name, type: d.type, data: buf }); render(); });
+  }
+}
+
+/* ---------- list ---------- */
+function render(){
+  if(!docs.size){ $('list').innerHTML = '<span style="color:var(--mute)">No documents yet.</span>'; return; }
+  $('list').innerHTML = Array.from(docs.values()).map(d => `
+    <div class="doc">
+      <div><b>${esc(d.title)}</b><br><small>${esc(d.name)} &middot; downloaded ${d.downloads}x</small></div>
+      <small>${esc(linkFor(d.code))}</small>
+      <div class="row">
+        <button class="btn sm" onclick="copyLink('${d.code}')">Copy link</button>
+        <button class="btn sm" onclick="genOtp('${d.code}')">Generate OTP</button>
+        <button class="btn ghost sm" onclick="openEdit('${d.code}')">Edit</button>
+        <button class="btn red sm" onclick="del('${d.code}')">Delete</button>
+      </div>
+    </div>`).join('');
+}
+
+window.copyLink = async code => { if(await copy(linkFor(code))) alert('Link copied!'); };
+
+$('upBtn').onclick = () => {
+  const title = $('up_title').value.trim(), file = $('up_file').files[0], m = $('upmsg');
+  if(!title || !file){ m.textContent = 'Enter name and choose a file.'; m.className = 'msg err'; return; }
+  const code = randCode();
+  docs.set(code, { code, title, file, name: file.name, type: file.type, otp: null, exp: 0, tries: 0, downloads: 0 });
+  $('up_title').value = ''; $('up_file').value = '';
+  m.textContent = 'Link created below.'; m.className = 'msg ok';
+  render();
+};
+
+window.genOtp = code => {
+  const d = docs.get(code); d.otp = randOtp(); d.exp = Date.now() + 15*60*1000; d.tries = 0;
+  $('otpTitle').textContent = d.title; $('otpVal').textContent = d.otp;
+  $('otpCopy').onclick = () => copy(d.otp);
+  otpDlg.showModal();
+};
+
+window.openEdit = code => {
+  editing = docs.get(code);
+  $('ed_title').value = editing.title; $('ed_file').value = ''; $('edmsg').textContent = '';
+  editDlg.showModal();
+};
+$('edSave').onclick = () => {
+  const title = $('ed_title').value.trim(), file = $('ed_file').files[0];
+  if(!title){ $('edmsg').textContent = 'Name cannot be empty.'; $('edmsg').className = 'msg err'; return; }
+  editing.title = title;
+  if(file){ editing.file = file; editing.name = file.name; editing.type = file.type; }
+  editDlg.close(); render();
+};
+
+window.del = code => {
+  if(!confirm('Delete "' + docs.get(code).title + '"? The link will stop working.')) return;
+  docs.delete(code); render();
+};
+
+window.addEventListener('beforeunload', e => { if(docs.size){ e.preventDefault(); e.returnValue = ''; } });
+</script>
+</body>
+</html>

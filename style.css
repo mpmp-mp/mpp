@@ -1,0 +1,33 @@
+:root{--bg:#0b1020;--card:#141b34;--line:#243056;--text:#e8ecff;--mute:#93a0cc;--pri:#4f8cff;--pri2:#7c3aed;--ok:#22c55e;--bad:#ef4444}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line)}
+header img{width:40px;height:40px}
+header h1{font-size:20px;margin:0}
+header .sp{flex:1}
+main{max-width:860px;margin:28px auto;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;margin-bottom:18px}
+.center{max-width:420px;margin:60px auto;text-align:center}
+.center img{width:72px;height:72px}
+h2{margin:0 0 14px;font-size:18px}
+label{display:block;font-size:13px;color:var(--mute);margin:12px 0 6px}
+input,button,select{font:inherit}
+input[type=text],input[type=email],input[type=password],input[type=file]{width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:#0e1530;color:var(--text)}
+input:focus{outline:2px solid var(--pri);border-color:transparent}
+.btn{background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;border:0;padding:11px 18px;border-radius:10px;cursor:pointer;font-weight:600}
+.btn:disabled{opacity:.6;cursor:wait}
+.btn.sm{padding:7px 12px;font-size:13px}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+.btn.red{background:var(--bad)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.msg{margin-top:12px;font-size:14px;min-height:20px}
+.msg.err{color:var(--bad)}.msg.ok{color:var(--ok)}
+.otp{font-size:42px;letter-spacing:10px;font-weight:800;text-align:center;margin:14px 0;color:#fff}
+.otpin{font-size:26px;letter-spacing:8px;text-align:center}
+.doc{display:flex;flex-direction:column;gap:10px;padding:16px 0;border-top:1px solid var(--line)}
+.doc:first-child{border-top:0}
+.doc b{font-size:16px}
+.doc small{color:var(--mute);word-break:break-all}
+dialog{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:16px;width:min(440px,92vw);padding:22px}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.hide{display:none!important}

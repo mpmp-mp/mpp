@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Online Documents</title>
+<link rel="icon" href="logo.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <img src="logo.svg" alt="logo">
+  <h1>Online Documents</h1>
+</header>
+
+<main>
+  <div id="home" class="card center hide">
+    <img src="logo.svg" alt="">
+    <h2>Online Documents</h2>
+    <p style="color:var(--mute)">Please open the document link shared with you.</p>
+  </div>
+
+  <div id="load" class="card center hide">
+    <img src="logo.svg" alt="">
+    <p style="color:var(--mute)">Connecting...</p>
+  </div>
+
+  <div id="gone" class="card center hide">
+    <h2>Link not available</h2>
+    <p style="color:var(--mute)">This link is invalid or the document has been removed.</p>
+  </div>
+
+  <div id="offline" class="card center hide">
+    <h2>Sender is offline</h2>
+    <p style="color:var(--mute)">Could not reach the sender right now. Please try again in a little while.</p>
+    <button class="btn" onclick="location.reload()">Retry</button>
+  </div>
+
+  <div id="gate" class="card center hide">
+    <img src="logo.svg" alt="">
+    <h2 id="dtitle"></h2>
+    <p style="color:var(--mute)">Enter the OTP you received to download this document.</p>
+    <input id="otp" class="otpin" type="text" inputmode="numeric" maxlength="6" placeholder="------" autocomplete="one-time-code">
+    <div class="row" style="justify-content:center;margin-top:14px">
+      <button id="go" class="btn">Verify &amp; Download</button>
+    </div>
+    <div id="msg" class="msg"></div>
+  </div>
+</main>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const code = new URLSearchParams(location.search).get('d');
+let conn = null, peer = null, timer = null;
+
+function show(id){ ['home','load','gone','offline','gate'].forEach(x => $(x).classList.toggle('hide', x !== id)); }
+function say(t, cls){ const m = $('msg'); m.textContent = t; m.className = 'msg ' + (cls || ''); }
+function offline(){ clearTimeout(timer); show('offline'); }
+
+function onData(msg){
+  if(msg.t === 'info'){
+    clearTimeout(timer);
+    if(!msg.ok){ show('gone'); return; }
+    $('dtitle').textContent = msg.title;
+    show('gate');
+  } else if(msg.t === 'bad'){
+    if(msg.gone){ show('gone'); return; }
+    $('go').disabled = false;
+    say('Wrong or expired OTP. Please ask for a new OTP.', 'err');
+  } else if(msg.t === 'file'){
+    const blob = new Blob([msg.data], { type: msg.type || 'application/octet-stream' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = msg.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    $('otp').value = ''; $('go').disabled = false;
+    say('Download started. Thank you!', 'ok');
+  }
+}
+
+if(!code){ show('home'); }
+else {
+  show('load');
+  timer = setTimeout(offline, 20000);
+  peer = new Peer();
+  peer.on('error', offline);
+  peer.on('open', () => {
+    conn = peer.connect(CFG.PEER_ID, { reliable: true });
+    conn.on('open', () => conn.send({ t: 'info', d: code }));
+    conn.on('data', onData);
+    conn.on('error', offline);
+  });
+}
+
+function verify(){
+  const otp = $('otp').value.trim();
+  if(!/^\d{6}$/.test(otp)){ say('Enter the 6-digit OTP.', 'err'); return; }
+  if(!conn || !conn.open){ offline(); return; }
+  $('go').disabled = true; say('Checking... large files may take a moment.');
+  conn.send({ t: 'otp', d: code, otp });
+}
+$('go').onclick = verify;
+$('otp').addEventListener('keydown', e => { if(e.key === 'Enter') verify(); });
+$('otp').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g,''); });
+</script>
+</body>
+</html>
