@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin - Online Documents</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="logo.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <img src="logo.svg" alt="logo">
+  <h1>Online Documents <span style="color:var(--mute);font-weight:400">/ Admin</span></h1>
+  <div class="sp"></div>
+  <button id="logout" class="btn ghost sm hide">Logout</button>
+</header>
+
+<main>
+  <!-- LOGIN -->
+  <div id="login" class="card center">
+    <img src="logo.svg" alt="">
+    <h2>Admin Login</h2>
+    <div style="text-align:left">
+      <label>Email</label><input id="em" type="email" autocomplete="username">
+      <label>Password</label><input id="pw" type="password" autocomplete="current-password">
+    </div>
+    <div class="row" style="justify-content:center;margin-top:16px"><button id="loginBtn" class="btn">Login</button></div>
+    <div id="lmsg" class="msg err"></div>
+  </div>
+
+  <!-- PANEL -->
+  <div id="panel" class="hide">
+    <div class="card">
+      <h2>Upload new document</h2>
+      <label>Document name</label><input id="up_title" type="text" placeholder="e.g. Invoice - Rahul">
+      <label>File</label><input id="up_file" type="file">
+      <div class="row" style="margin-top:14px"><button id="upBtn" class="btn">Upload &amp; create link</button></div>
+      <div id="upmsg" class="msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Your documents</h2>
+      <div id="list"></div>
+    </div>
+  </div>
+</main>
+
+<!-- OTP popup -->
+<dialog id="otpDlg">
+  <h2>OTP for client</h2>
+  <div id="otpTitle" style="color:var(--mute)"></div>
+  <div id="otpVal" class="otp"></div>
+  <div style="color:var(--mute);font-size:13px;text-align:center">Valid for 15 minutes, one time use.</div>
+  <div class="row" style="justify-content:center;margin-top:16px">
+    <button id="otpCopy" class="btn sm">Copy OTP</button>
+    <button class="btn ghost sm" onclick="otpDlg.close()">Close</button>
+  </div>
+</dialog>
+
+<!-- Edit popup -->
+<dialog id="editDlg">
+  <h2>Edit document</h2>
+  <label>Document name</label><input id="ed_title" type="text">
+  <label>Replace file (optional)</label><input id="ed_file" type="file">
+  <div class="row" style="margin-top:16px">
+    <button id="edSave" class="btn sm">Save</button>
+    <button class="btn ghost sm" onclick="editDlg.close()">Cancel</button>
+  </div>
+  <div id="edmsg" class="msg"></div>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script>
+const sb = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+const otpDlg = $('otpDlg'), editDlg = $('editDlg');
+let docs = [], editing = null;
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeName = n => n.replace(/[^A-Za-z0-9._-]/g, '_');
+const linkFor = code => new URL('./?d=' + code, location.href).href;
+function randCode(){
+  const a = 'abcdefghijkmnpqrstuvwxyz23456789', b = crypto.getRandomValues(new Uint8Array(12));
+  return Array.from(b, x => a[x % a.length]).join('');
+}
+function randOtp(){
+  const b = crypto.getRandomValues(new Uint32Array(1))[0];
+  return String(b % 1000000).padStart(6, '0');
+}
+async function copy(text){
+  try{ await navigator.clipboard.writeText(text); return true; }catch(e){ prompt('Copy this:', text); return false; }
+}
+
+/* ---------- login ---------- */
+async function refresh(){
+  const { data:{ session } } = await sb.auth.getSession();
+  $('login').classList.toggle('hide', !!session);
+  $('panel').classList.toggle('hide', !session);
+  $('logout').classList.toggle('hide', !session);
+  if(session) load();
+}
+$('loginBtn').onclick = async () => {
+  $('lmsg').textContent = '';
+  const { error } = await sb.auth.signInWithPassword({ email: $('em').value.trim(), password: $('pw').value });
+  if(error){ $('lmsg').textContent = 'Wrong email or password.'; return; }
+  $('pw').value = ''; refresh();
+};
+$('pw').addEventListener('keydown', e => { if(e.key === 'Enter') $('loginBtn').click(); });
+$('logout').onclick = async () => { await sb.auth.signOut(); refresh(); };
+
+/* ---------- list ---------- */
+async function load(){
+  const { data, error } = await sb.from('documents').select('*').order('created_at', { ascending:false });
+  if(error){ $('list').textContent = 'Could not load documents.'; return; }
+  docs = data;
+  if(!docs.length){ $('list').innerHTML = '<span style="color:var(--mute)">No documents yet.</span>'; return; }
+  $('list').innerHTML = docs.map(d => `
+    <div class="doc">
+      <div><b>${esc(d.title)}</b><br><small>${esc(d.file_name)} &middot; ${new Date(d.created_at).toLocaleString()}</small></div>
+      <small>${esc(linkFor(d.code))}</small>
+      <div class="row">
+        <button class="btn sm" onclick="copyLink('${d.id}')">Copy link</button>
+        <button class="btn sm" onclick="genOtp('${d.id}')">Generate OTP</button>
+        <button class="btn ghost sm" onclick="openEdit('${d.id}')">Edit</button>
+        <button class="btn red sm" onclick="del('${d.id}')">Delete</button>
+      </div>
+    </div>`).join('');
+}
+const find = id => docs.find(d => d.id === id);
+
+window.copyLink = async id => { const d = find(id); if(await copy(linkFor(d.code))) alert('Link copied!'); };
+
+/* ---------- upload ---------- */
+$('upBtn').onclick = async () => {
+  const title = $('up_title').value.trim(), file = $('up_file').files[0], m = $('upmsg');
+  m.className = 'msg'; 
+  if(!title || !file){ m.textContent = 'Enter name and choose a file.'; m.className = 'msg err'; return; }
+  $('upBtn').disabled = true; m.textContent = 'Uploading...';
+  const path = crypto.randomUUID() + '/' + safeName(file.name);
+  const up = await sb.storage.from('docs').upload(path, file, { contentType: file.type || 'application/octet-stream' });
+  if(up.error){ m.textContent = 'Upload failed: ' + up.error.message; m.className = 'msg err'; $('upBtn').disabled = false; return; }
+  const ins = await sb.from('documents').insert({ code: randCode(), title, file_path: path, file_name: file.name });
+  if(ins.error){
+    await sb.storage.from('docs').remove([path]);
+    m.textContent = 'Failed: ' + ins.error.message; m.className = 'msg err'; $('upBtn').disabled = false; return;
+  }
+  $('up_title').value = ''; $('up_file').value = '';
+  m.textContent = 'Uploaded. Link created below.'; m.className = 'msg ok';
+  $('upBtn').disabled = false; load();
+};
+
+/* ---------- OTP ---------- */
+window.genOtp = async id => {
+  const d = find(id), otp = randOtp();
+  const { error } = await sb.from('documents').update({
+    otp, otp_expires: new Date(Date.now() + 15*60*1000).toISOString(), attempts: 0
+  }).eq('id', id);
+  if(error){ alert('Could not create OTP.'); return; }
+  $('otpTitle').textContent = d.title;
+  $('otpVal').textContent = otp;
+  $('otpCopy').onclick = () => copy(otp);
+  otpDlg.showModal();
+};
+
+/* ---------- edit ---------- */
+window.openEdit = id => {
+  editing = find(id);
+  $('ed_title').value = editing.title; $('ed_file').value = ''; $('edmsg').textContent = '';
+  editDlg.showModal();
+};
+$('edSave').onclick = async () => {
+  const title = $('ed_title').value.trim(), file = $('ed_file').files[0], m = $('edmsg');
+  if(!title){ m.textContent = 'Name cannot be empty.'; m.className = 'msg err'; return; }
+  $('edSave').disabled = true; m.className = 'msg'; m.textContent = 'Saving...';
+  const patch = { title };
+  let oldPath = null;
+  if(file){
+    const path = crypto.randomUUID() + '/' + safeName(file.name);
+    const up = await sb.storage.from('docs').upload(path, file, { contentType: file.type || 'application/octet-stream' });
+    if(up.error){ m.textContent = 'Upload failed.'; m.className = 'msg err'; $('edSave').disabled = false; return; }
+    oldPath = editing.file_path; patch.file_path = path; patch.file_name = file.name;
+  }
+  const { error } = await sb.from('documents').update(patch).eq('id', editing.id);
+  if(error){ m.textContent = 'Save failed.'; m.className = 'msg err'; $('edSave').disabled = false; return; }
+  if(oldPath) await sb.storage.from('docs').remove([oldPath]);
+  $('edSave').disabled = false; editDlg.close(); load();
+};
+
+/* ---------- delete ---------- */
+window.del = async id => {
+  const d = find(id);
+  if(!confirm('Delete "' + d.title + '" permanently? The link will stop working.')) return;
+  await sb.storage.from('docs').remove([d.file_path]);
+  const { error } = await sb.from('documents').delete().eq('id', id);
+  if(error){ alert('Delete failed.'); return; }
+  load();
+};
+
+refresh();
+</script>
+</body>
+</html>
